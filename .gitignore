@@ -1,0 +1,4 @@
+pub/main.js
+node_modules/
+*.swp
+*.swo

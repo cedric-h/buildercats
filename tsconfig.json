@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es6",
+    "esModuleInterop": true,
+    "lib": [ "es2019", "dom" ]
+  },
+  "baseURL": "./",
+  "include": [ "./", "node_modules/webgl-strict-types/index.d.ts" ]
+}
