@@ -246,23 +246,9 @@ class Geometry {
   }
 }
 
-class FullscreenSubRendr {
-  shaderPair: ShaderPair;
-  constructor(gl: WebGLCtx) {
-    this.shaderPair = new ShaderPair(gl, {
-      vert: { src: fullscreenVertSrc, uniforms: [], attributes: [] },
-      frag: { src: fullscreenFragSrc, uniforms: [] }
-    });
-  }
-  frame(gl: WebGLCtx) {
-    gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
-  }
-}
-
 class Rendr {
   gl: WebGLCtx;
   defaultPass: Pass;
-  // fullscreenSubRendr: FullscreenSubRendr;
   indexCount: number;
   fernIn: WebGLVertexArrayObject;
   fernOut: WebGLVertexArrayObject;
@@ -290,8 +276,6 @@ class Rendr {
                             -1.0, 1.0);
     });
     window.dispatchEvent(new UIEvent("resize"));
-
-    // this.fullscreenSubRendr = new FullscreenSubRendr(gl);
 
     this.shaderPair = new ShaderPair(gl, {
       vert: {
@@ -365,7 +349,6 @@ class Rendr {
     gl.blitFramebuffer(0, 0, this.defaultPass.width, this.defaultPass.height,
                        0, 0,      window.innerWidth,      window.innerHeight,
                        gl.COLOR_BUFFER_BIT, gl.LINEAR);
-    // this.fullscreenSubRendr.frame(gl);
   }
 }
 
