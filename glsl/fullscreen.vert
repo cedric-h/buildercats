@@ -1,11 +1,15 @@
 #version 300 es
 precision highp float;
+precision highp int;
 
-in vec2 a_pos;
-in vec2 a_tex;
-out vec2 v_tex;
+uniform mat4 MVP;
 
-void main(void) {
-  v_tex = a_tex;
-  gl_Position = vec4(a_pos, 0.0, 1.0);
+layout(location = 0) in vec2 position;
+layout(location = 1) in vec2 texcoord;
+
+out vec2 uv;
+
+void main() {
+  uv = texcoord;
+  gl_Position = MVP * vec4(position, 0.0, 1.0);
 }

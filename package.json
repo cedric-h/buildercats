@@ -4,12 +4,11 @@
     "watch": "nodemon --ignore \"./pub/main.js\" --exec \"npm run build\" --ext ts,html,vert,frag"
   },
   "dependencies": {
-    "@types/seedrandom": "^3.0.1",
-    "esbuild": "^0.13.8",
-    "esbuild-plugin-glsl": "^1.0.5",
-    "seedrandom": "^3.0.5"
+    "gl-matrix": "^3.4.3"
   },
   "devDependencies": {
+    "esbuild-plugin-glsl": "^1.0.5",
+    "esbuild": "^0.13.8",
     "webgl-strict-types": "^1.0.5"
   }
 }

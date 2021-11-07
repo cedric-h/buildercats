@@ -1,12 +1,13 @@
-attribute vec2 a_pos;
-attribute vec4 a_inst_color;
-attribute vec2 a_inst_pos;
-attribute float a_inst_scale;
-uniform mat4 u_mvp;
+#version 300 es
+#define POSITION_LOCATION 0
 
-varying vec4 v_color;
+precision highp float;
+precision highp int;
+
+uniform mat4 MVP;
+
+layout(location = POSITION_LOCATION) in vec2 position;
 
 void main() {
-  v_color = a_inst_color;
-  gl_Position = u_mvp * vec4(((a_pos * a_inst_scale) + a_inst_pos), 0.0, 1.0);
+  gl_Position = MVP * vec4(position, 0.0, 1.0);
 }
