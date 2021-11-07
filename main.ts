@@ -26,12 +26,29 @@ class Mat4 {
     ret.data[3][2] = -f_range * near_z;
     return ret;
   }
+  static scale(x: number, y: number, z: number) {
+    const ret = new Mat4();
+    ret.data[0][0] = x;
+    ret.data[1][1] = y;
+    ret.data[2][2] = z;
+    return ret;
+  }
   transpose() {
     const res = new Mat4();
     for(let c = 0; c < 4; c++)
       for(let r = 0; r < 4; r++)
         res.data[r][c] = this.data[c][r];
     return res;
+  }
+  mul4x4(m: Mat4) {
+    const ret = new Mat4();
+    for (let c = 0; c < 4; c++)
+      for (let r = 0; r < 4; r++) {
+        ret.data[c][r] = 0.0;
+        for (let k = 0; k < 4; k++)
+          ret.data[c][r] += this.data[k][r] * m.data[c][k];
+      }
+    return ret;
   }
 }
 
@@ -54,8 +71,8 @@ abstract class Buffer {
 
   constructor(
     gl: WebGLCtx,
-    data: Float32Array | Uint16Array | Uint8Array,
     usage: WebGL2RenderingContextStrict.BufferDataUsage,
+    data: Float32Array | Uint16Array | Uint8Array,
   ) {
     this.buf = gl.createBuffer()!;
     gl.bindBuffer(this.target(gl), this.buf);
@@ -159,11 +176,9 @@ class ShaderPair {
 class Pass {
   targetTexture: WebGLTexture;
   framebuffer: WebGLFramebuffer;
-  width: number;
-  height: number;
   constructor(gl: WebGLCtx, width: number, height: number) {
-    const targetTextureWidth = this.width = width * 2;
-    const targetTextureHeight = this.height = height * 2;
+    const targetTextureWidth = width;
+    const targetTextureHeight = height;
     this.targetTexture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.targetTexture);
      
@@ -185,7 +200,16 @@ class Pass {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    const rbuf = gl.createRenderbuffer()!;
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rbuf);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.RGBA8, width, height);
+
     this.framebuffer = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rbuf);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
   }
   bind(gl: WebGLCtx) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
@@ -209,8 +233,8 @@ class Geometry {
   constructor(gl: WebGLCtx, {vertices, indices}: MeshData) {
     vertices = vertices.map(([x, y]) => [x, -y]);
     this.indexCount = indices.length;
-    this.vertices = new VertexBuffer(gl, new Float32Array(vertices.flat()), gl.STATIC_DRAW);
-    this.indices = new IndexBuffer(gl, new Uint16Array(indices), gl.STATIC_DRAW);
+    this.vertices = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(vertices.flat()));
+    this.indices = new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices));
   }
   static scaled(gl: WebGLCtx, scale: number, {vertices, indices}: MeshData) {
     type Tri = [number, number, number]; /* indices */
@@ -246,10 +270,45 @@ class Geometry {
   }
 }
 
+class FullscreenSubRendr {
+  shaderPair: ShaderPair;
+  vao: WebGLVertexArrayObject;
+  constructor(gl: WebGLCtx) {
+    this.shaderPair = new ShaderPair(gl, {
+      vert: {
+        src: fullscreenVertSrc,
+        uniforms: [],
+        attributes: [
+          { name: "a_pos", size: 2, kind: gl.FLOAT },
+          { name: "a_tex", size: 2, kind: gl.FLOAT },
+        ]
+      },
+      frag: { src: fullscreenFragSrc, uniforms: [] }
+    });
+    this.vao = this.shaderPair.use(gl, new Map([
+      [ "a_pos", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+        -1.0, -1.0,    1.0, -1.0,    1.0,  1.0,
+         1.0,  1.0,   -1.0,  1.0,   -1.0, -1.0
+      ]))],
+      [ "a_tex", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+         0.0,  1.0,    1.0,  1.0,    1.0,  0.0,
+         1.0,  0.0,    0.0,  0.0,    0.0,  1.0
+      ]))],
+    ]));
+  }
+  
+  frame(gl: WebGLCtx) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+}
+
 class Rendr {
   gl: WebGLCtx;
   defaultPass: Pass;
   indexCount: number;
+  fullscreenSubRender: FullscreenSubRendr;
   fernIn: WebGLVertexArrayObject;
   fernOut: WebGLVertexArrayObject;
   fernInGeo: Geometry;
@@ -269,13 +328,13 @@ class Rendr {
       const width  = canvas.width  = window.innerWidth;
       const height = canvas.height = window.innerHeight;
       gl.viewport(0, 0, width, height);
+      this.cam = Mat4.ortho(width * 0.02, height * 0.02, -1.0, 1.0);
       this.defaultPass.free(gl);
       this.defaultPass = new Pass(gl, width, height);
-      this.cam = Mat4.ortho(this.defaultPass.width  * 0.005,
-                            this.defaultPass.height * 0.005,
-                            -1.0, 1.0);
     });
     window.dispatchEvent(new UIEvent("resize"));
+
+    this.fullscreenSubRender = new FullscreenSubRendr(gl);
 
     this.shaderPair = new ShaderPair(gl, {
       vert: {
@@ -298,15 +357,15 @@ class Rendr {
       { color: [0.30, 0.70, 0.35, 1.0], pos: [ 0.0, 1.0 ], scale: 1.00 },
     ];
     let colors = insts.map(i => i.color).flat().map(x => Math.round(x * 255));
-    const inColorBuf = new VertexBuffer(gl, new Uint8Array(colors), gl.STATIC_DRAW);
+    const inColorBuf = new VertexBuffer(gl, gl.STATIC_DRAW, new Uint8Array(colors));
     colors = colors.map(x => Math.round(x * 0.75));
-    const outColorBuf = new VertexBuffer(gl, new Uint8Array(colors), gl.STATIC_DRAW);
+    const outColorBuf = new VertexBuffer(gl, gl.STATIC_DRAW, new Uint8Array(colors));
 
     const poses = insts.map(i => i.pos).flat();
-    const posBuf = new VertexBuffer(gl, new Float32Array(poses), gl.STATIC_DRAW);
+    const posBuf = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(poses));
 
     const scales = insts.map(i => i.scale);
-    const scaleBuf = new VertexBuffer(gl, new Float32Array(scales), gl.STATIC_DRAW);
+    const scaleBuf = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(scales));
 
     const attributes = new Map([
       [ "a_pos",         fernIn.vertices ],
@@ -344,11 +403,7 @@ class Rendr {
     this.fernInGeo.indices.bind(gl);
     gl.drawElementsInstanced(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT, 0, 1);
 
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.defaultPass.framebuffer);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-    gl.blitFramebuffer(0, 0, this.defaultPass.width, this.defaultPass.height,
-                       0, 0,      window.innerWidth,      window.innerHeight,
-                       gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    this.fullscreenSubRender.frame(gl);
   }
 }
 
