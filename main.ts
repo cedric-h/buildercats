@@ -133,13 +133,11 @@ class IndexedGeometry {
 /* one FRAMEbuffer with MSAA enabled, then another with a custom RENDERbuffer so that it can be
  * sampled as a texture for rendering onto a fullscreen quad.
  */
-class PassMSAA {
+class FrameMSAA {
   renderFrame: WebGLFramebuffer;
   colorFrame: WebGLFramebuffer;
   colorRenderbuffer: WebGLRenderbuffer;
   colorTexture: WebGLTexture;
-  shaders: ShaderPair;
-  fullscreenQuad: Geometry;
   constructor(gl: WebGLCtx, public width: number, public height: number) {
     const texture = this.colorTexture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -148,7 +146,6 @@ class PassMSAA {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
-    // -- Init Frame Buffers
     const colorFrame = this.colorFrame = gl.createFramebuffer()!;
     const renderFrame = this.renderFrame = gl.createFramebuffer()!;
     const colorRenderbuffer = this.colorRenderbuffer = gl.createRenderbuffer()!;
@@ -162,14 +159,45 @@ class PassMSAA {
     gl.bindFramebuffer(gl.FRAMEBUFFER, colorFrame);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
 
+  delete(gl: WebGLCtx) {
+    gl.deleteTexture(this.colorTexture);
+    gl.deleteRenderbuffer(this.colorRenderbuffer);
+    gl.deleteFramebuffer(this.renderFrame);
+    gl.deleteFramebuffer(this.colorFrame);
+  }
+
+  bind(gl: WebGLCtx) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.renderFrame);
+    gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0]);
+  }
+
+  blit(gl: WebGLCtx) {
+    // Blit framebuffers, no Multisample texture 2d in WebGL 2
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.renderFrame);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.colorFrame);
+    gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0]);
+    gl.blitFramebuffer(
+      0, 0, this.width, this.height,
+      0, 0, this.width, this.height,
+      gl.COLOR_BUFFER_BIT, gl.NEAREST
+    );
+  }
+}
+
+class PassMSAA {
+  frame: FrameMSAA;
+  shaders: ShaderPair;
+  fullscreenQuad: Geometry;
+  constructor(gl: WebGLCtx, width: number, height: number) {
     this.shaders = new ShaderPair(gl, {
       vert: {
         src: splashVertSrc,
         uniforms: [{ name: "diffuse", kind: "1i" }],
         attributes: [
-          { name: "position", size: 2, kind: gl.FLOAT },
-          { name: "texcoord", size: 2, kind: gl.FLOAT },
+          { name: "a_pos", size: 2, kind: gl.FLOAT },
+          { name: "a_tex", size: 2, kind: gl.FLOAT },
         ]
       },
       frag: { src: splashFragSrc, uniforms: [] }
@@ -177,7 +205,7 @@ class PassMSAA {
 
     this.fullscreenQuad = new Geometry(
       this.shaders.makeVAO(gl, new Map([
-        ["position", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+        ["a_pos", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
           -1.0, -1.0,
            1.0, -1.0,
            1.0,  1.0,
@@ -185,7 +213,7 @@ class PassMSAA {
           -1.0,  1.0,
           -1.0, -1.0
         ]))],
-        ["texcoord", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+        ["a_tex", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
           0.0, 1.0,
           1.0, 1.0,
           1.0, 0.0,
@@ -196,48 +224,28 @@ class PassMSAA {
       ])),
       6
     );
+
+    this.frame = new FrameMSAA(gl, width, height);
   }
 
-  delete(gl: WebGLCtx) {
-    gl.deleteTexture(this.colorTexture);
-    gl.deleteRenderbuffer(this.colorRenderbuffer);
-    gl.deleteFramebuffer(this.renderFrame);
-    gl.deleteFramebuffer(this.colorFrame);
+  resize(gl: WebGLCtx, width: number, height: number) {
+    this.frame.delete(gl);
+    this.frame = new FrameMSAA(gl, width, height);
   }
 
-  startMSAA(gl: WebGLCtx) {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.renderFrame);
-    gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0]);
-  }
+  withMSAA(gl: WebGLCtx, msaaRender: (gl: WebGLCtx) => void) {
+    this.frame.bind(gl);
+    msaaRender(gl);
+    this.frame.blit(gl);
 
-  showMSAA(gl: WebGLCtx) {
-    // Blit framebuffers, no Multisample texture 2d in WebGL 2
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.renderFrame);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.colorFrame);
-    gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0]);
-    gl.blitFramebuffer(
-      0, 0, this.width, this.height,
-      0, 0, this.width, this.height,
-      gl.COLOR_BUFFER_BIT, gl.NEAREST
-    );
-
-    // Pass 2
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.shaders.use(gl);
     gl.uniform1i(this.shaders.uniforms.get("diffuse")!.loc, 0);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-
+    gl.bindTexture(gl.TEXTURE_2D, this.frame.colorTexture);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
-
     this.fullscreenQuad.draw(gl);
-  }
-
-  withMSAA(gl: WebGLCtx, msaaRender: (gl: WebGLCtx) => void) {
-    this.startMSAA(gl);
-    msaaRender(gl);
-    this.showMSAA(gl);
   }
 }
 
@@ -264,15 +272,15 @@ class Rendr {
     this.shaders = new ShaderPair(gl, {
       vert: {
         src: defaultVertSrc,
-        uniforms: [{ name: "MVP", kind: "Matrix4fv" }],
-        attributes: [{ name: "position", size: 2, kind: gl.FLOAT }],
+        uniforms: [{ name: "mvp", kind: "Matrix4fv" }],
+        attributes: [{ name: "a_pos", size: 2, kind: gl.FLOAT }],
       },
       frag: { src: defaultFragSrc, uniforms: [] }
     });
     const { vertices, indices } = fernGeoJSON.mesh;
     const fernVertPoses = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(vertices.flat()));
     this.fern = new IndexedGeometry(
-      this.shaders.makeVAO(gl, new Map([["position", fernVertPoses]])),
+      this.shaders.makeVAO(gl, new Map([["a_pos", fernVertPoses]])),
       new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices))
     );
 
@@ -283,8 +291,7 @@ class Rendr {
   resize(width: number, height: number) {
     const { gl } = this;
     gl.viewport(0, 0, this.width = width, this.height = height);
-    this.pass.delete(gl);
-    this.pass = new PassMSAA(gl, width, height);
+    this.pass.resize(gl, width, height);
   }
 
   frame() {
@@ -294,7 +301,7 @@ class Rendr {
       let { width: w, height: h } = this;
       w /= 90; h /= 90;
       const mvp = mat4.ortho(mat4.create(), -w/2, w/2, -h/2, h/2, -1, 1);
-      gl.uniformMatrix4fv(this.shaders.uniforms.get("MVP")!.loc, false, mvp);
+      gl.uniformMatrix4fv(this.shaders.uniforms.get("mvp")!.loc, false, mvp);
 
       this.fern.draw(gl);
     });
