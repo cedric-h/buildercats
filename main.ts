@@ -60,7 +60,7 @@ class ShaderPair {
 
       const info = gl.getShaderInfoLog(shdr);
       gl.deleteShader(shdr);
-      const shdrKindName = ["VERTEX_SHADER", "FRAGMENT_SHADER"].find(x => (gl as any)[x] == kind);
+      const shdrKindName = ["VERTEX", "FRAGMENT"].find(x => (gl as any)[x + "_SHADER"] == kind);
       throw new Error("Couldn't compile " + shdrKindName + ": " + info);
     }
 
@@ -241,46 +241,78 @@ class PassMSAA {
   }
 }
 
-window.onload = () => {
-  const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-  const gl = canvas.getContext( 'webgl2', { antialias: false } )! as any as WebGLCtx;
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  gl.viewport(0, 0, canvas.width, canvas.height);
+class Rendr {
+  pass: PassMSAA;
+  shaders: ShaderPair;
+  fern: IndexedGeometry;
+  width: number;
+  height: number;
+  gl: WebGLCtx;
+  constructor(canvas: HTMLCanvasElement) {
+    this.width = canvas.width;
+    this.height = canvas.height;
+    const gl = this.gl = canvas.getContext( 'webgl2', { antialias: false } )! as any as WebGLCtx;
 
-  const isWebGL2 = !!gl;
-  if (!isWebGL2) {
-    document.body.innerHTML = 'WebGL 2 is not available. See <a href="' +
-      'https://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">' +
-      'How to get a WebGL 2 implementation</a>';
-    return;
+    const isWebGL2 = !!gl;
+    if (!isWebGL2) {
+      document.body.innerHTML = 'WebGL 2 is not available. See <a href="' +
+        'https://www.khronos.org/webgl/wiki/Getting_a_WebGL_Implementation">' +
+        'How to get a WebGL 2 implementation</a>';
+      throw new Error("Couldn't initialize WebGL2 context");
+    }
+
+    this.shaders = new ShaderPair(gl, {
+      vert: {
+        src: defaultVertSrc,
+        uniforms: [{ name: "MVP", kind: "Matrix4fv" }],
+        attributes: [{ name: "position", size: 2, kind: gl.FLOAT }],
+      },
+      frag: { src: defaultFragSrc, uniforms: [] }
+    });
+    const { vertices, indices } = fernGeoJSON.mesh;
+    const fernVertPoses = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(vertices.flat()));
+    this.fern = new IndexedGeometry(
+      this.shaders.makeVAO(gl, new Map([["position", fernVertPoses]])),
+      new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices))
+    );
+
+    this.pass = new PassMSAA(gl, this.width, this.height);
+    this.resize(canvas.width, canvas.height);
   }
 
-  const defaultShaderPair = new ShaderPair(gl, {
-    vert: {
-      src: defaultVertSrc,
-      uniforms: [{ name: "MVP", kind: "Matrix4fv" }],
-      attributes: [{ name: "position", size: 2, kind: gl.FLOAT }],
-    },
-    frag: { src: defaultFragSrc, uniforms: [] }
-  });
-  const { vertices, indices } = fernGeoJSON.mesh;
-  const fernVertPoses = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(vertices.flat()));
-  const fern = new IndexedGeometry(
-    defaultShaderPair.makeVAO(gl, new Map([["position", fernVertPoses]])),
-    new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices))
-  );
+  resize(width: number, height: number) {
+    const { gl } = this;
+    gl.viewport(0, 0, this.width = width, this.height = height);
+    this.pass.delete(gl);
+    this.pass = new PassMSAA(gl, width, height);
+  }
 
-  const pass = new PassMSAA(gl, canvas.width, canvas.height);
+  frame() {
+    this.pass.withMSAA(this.gl, gl => {
+      this.shaders.use(gl);
 
-  pass.withMSAA(gl, gl => {
-    defaultShaderPair.use(gl);
+      let { width: w, height: h } = this;
+      w /= 90; h /= 90;
+      const mvp = mat4.ortho(mat4.create(), -w/2, w/2, -h/2, h/2, -1, 1);
+      gl.uniformMatrix4fv(this.shaders.uniforms.get("MVP")!.loc, false, mvp);
 
-    let { width: w, height: h } = canvas;
-    w /= 90; h /= 90;
-    const mvp = mat4.ortho(mat4.create(), -w/2, w/2, -h/2, h/2, -1, 1);
-    gl.uniformMatrix4fv(defaultShaderPair.uniforms.get("MVP")!.loc, false, mvp);
+      this.fern.draw(gl);
+    });
+  }
+}
 
-    fern.draw(gl);
-  });
+window.onload = () => {
+  const canvas = document.getElementById("canvas") as HTMLCanvasElement;
+  const rendr = new Rendr(canvas);
+  (window.onresize = () => {
+    rendr.resize(
+      canvas.width = window.innerWidth,
+      canvas.height = window.innerHeight
+    );
+  })();
+
+  (function frame() {
+    rendr.frame();
+    requestAnimationFrame(frame);
+  })();
 }
