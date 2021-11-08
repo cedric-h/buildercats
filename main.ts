@@ -130,8 +130,12 @@ class IndexedGeometry {
   }
 }
 
-/* one FRAMEbuffer with MSAA enabled, then another with a custom RENDERbuffer so that it can be
- * sampled as a texture for rendering onto a fullscreen quad.
+/* this is a series of workarounds to get reliable MSAA on WebGL. You can't initialize your canvas
+ * with MSAA -- if you pass antialias: true, you don't know how much MSAA you're getting -- though
+ * you can make a separate framebuffer with MSAA. you'd think you could simply sample that
+ * framebuffer onto your canvas with a fullscreen quad. however, you can't directly sample an MSAA
+ * framebuffer ... so you have to use another non-MSAA framebuffer as a proxy, dumping the MSAA's
+ * contents into it using gl.blitFramebuffer.   ... yeah.
  */
 class FrameMSAA {
   renderFrame: WebGLFramebuffer;
