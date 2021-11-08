@@ -186,7 +186,7 @@ class FrameMSAA {
   }
 }
 
-class PassMSAA {
+class SplashPassMSAA {
   frame: FrameMSAA;
   shaders: ShaderPair;
   fullscreenQuad: Geometry;
@@ -250,7 +250,7 @@ class PassMSAA {
 }
 
 class Rendr {
-  pass: PassMSAA;
+  pass: SplashPassMSAA;
   shaders: ShaderPair;
   fern: IndexedGeometry;
   width: number;
@@ -284,7 +284,7 @@ class Rendr {
       new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices))
     );
 
-    this.pass = new PassMSAA(gl, this.width, this.height);
+    this.pass = new SplashPassMSAA(gl, this.width, this.height);
     this.resize(canvas.width, canvas.height);
   }
 
