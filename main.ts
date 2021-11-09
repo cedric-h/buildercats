@@ -15,7 +15,7 @@ abstract class Buffer {
   constructor(
     gl: WebGLCtx,
     usage: WebGL2RenderingContextStrict.BufferDataUsage,
-    public data: Float32Array | Uint16Array | Uint8Array,
+    public data: BufferSource & { length: number }
   ) {
     this.buf = gl.createBuffer()!;
     gl.bindBuffer(this.target(gl), this.buf);
@@ -33,10 +33,8 @@ class IndexBuffer extends Buffer {
   target(gl: WebGLCtx) { return gl.ELEMENT_ARRAY_BUFFER }
 }
 
-type UniformDesc = { name: string; kind: string; }
-type FragStageDesc = { src: string; uniforms: UniformDesc[] };
-type AttributeDesc = {
-  name: string;
+type FragStageDesc = { src: string; };
+type AttribDesc = {
   size: 1 | 2 | 3 | 4;
   kind: ArrayType;
   normalized?: GLboolean;
@@ -44,13 +42,18 @@ type AttributeDesc = {
   offset?: GLintptr;
   instanced?: number
 }
-type VertStageDesc = FragStageDesc & { attributes: AttributeDesc[] };
-type ShaderPairDesc = { vert: VertStageDesc, frag: FragStageDesc };
-class ShaderPair {
+type VertStageDesc<AttribKey extends string> =
+  FragStageDesc & { attributes: Record<AttribKey, AttribDesc> };
+type ShaderPairDesc<UniformKey extends string, AttribKey extends string> = {
+  uniforms: Record<UniformKey, string>,
+  vert: VertStageDesc<AttribKey>,
+  frag: FragStageDesc,
+};
+class ShaderPair<K extends { attribKeys: string; uniformKeys: string; }> {
   program: WebGLProgram;
-  uniforms: Map<string, { loc: WebGLUniformLocation, kind: string }>;
-  attrs: (AttributeDesc & { loc: number })[];
-  constructor(gl: WebGLCtx, desc: ShaderPairDesc) {
+  uniforms = {} as Record<K["uniformKeys"], { loc: WebGLUniformLocation, kind: string }>;
+  attrs = {} as Record<K["attribKeys"], AttribDesc & { loc: number }>;
+  constructor(gl: WebGLCtx, desc: ShaderPairDesc<K["uniformKeys"], K["attribKeys"]>) {
     function createShader(kind: ShaderType, src: string) {
       const shdr = gl.createShader(kind)!;
       gl.shaderSource(shdr, src);
@@ -82,20 +85,24 @@ class ShaderPair {
       createShader(gl.FRAGMENT_SHADER, desc.frag.src)
     );
     gl.useProgram(this.program);
-    this.uniforms = new Map([desc.frag.uniforms, desc.vert.uniforms].flat().map(u => {
-      return [u.name, { loc: gl.getUniformLocation(this.program, u.name)!, kind: u.kind }];
-    }));
-    this.attrs = desc.vert.attributes.map(a => Object.assign({
-      loc: gl.getAttribLocation(this.program, a.name)
-    }, a));
+
+    const uniDescs = Object.entries(desc.uniforms) as [K["uniformKeys"], string][];
+    for (const [name, kind] of uniDescs)
+      this.uniforms[name] = { loc: gl.getUniformLocation(this.program, name)!, kind };
+
+    const attrDescs = Object.entries(desc.vert.attributes) as [K["attribKeys"], AttribDesc][];
+    for (const [name, attr] of attrDescs)
+      this.attrs[name] = { loc: gl.getAttribLocation(this.program, name), ...attr };
   }
 
-  makeVAO(gl: WebGLCtx, bind: Map<string, Buffer>): WebGLVertexArrayObject {
+  makeVAO(gl: WebGLCtx, bind: Record<K["attribKeys"], Buffer>): WebGLVertexArrayObject {
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
     gl.useProgram(this.program);
-    for (const { name, loc, size, kind, normalized, stride, offset, instanced } of this.attrs) {
-      bind.get(name)!.bind(gl);
+    for (const n in this.attrs) {
+      const name = n as K["attribKeys"];
+      const { loc, size, kind, normalized, stride, offset, instanced } = this.attrs[name];
+      bind[name].bind(gl);
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, size, kind, normalized ?? false, stride ?? 0, offset ?? 0);
       if (typeof instanced == "number")
@@ -192,40 +199,40 @@ class FrameMSAA {
 
 class SplashPassMSAA {
   frame: FrameMSAA;
-  shaders: ShaderPair;
+  shaders: ShaderPair<{ attribKeys: "a_pos" | "a_tex", uniformKeys: "u_diffuse" }>;
   fullscreenQuad: Geometry;
   constructor(gl: WebGLCtx, width: number, height: number) {
     this.shaders = new ShaderPair(gl, {
+      uniforms: { u_diffuse: "1i" },
       vert: {
         src: splashVertSrc,
-        uniforms: [{ name: "diffuse", kind: "1i" }],
-        attributes: [
-          { name: "a_pos", size: 2, kind: gl.FLOAT },
-          { name: "a_tex", size: 2, kind: gl.FLOAT },
-        ]
+        attributes: {
+          a_pos: { size: 2, kind: gl.FLOAT },
+          a_tex: { size: 2, kind: gl.FLOAT },
+        },
       },
-      frag: { src: splashFragSrc, uniforms: [] }
+      frag: { src: splashFragSrc }
     });
 
     this.fullscreenQuad = new Geometry(
-      this.shaders.makeVAO(gl, new Map([
-        ["a_pos", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+      this.shaders.makeVAO(gl, {
+        a_pos: new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
           -1.0, -1.0,
            1.0, -1.0,
            1.0,  1.0,
            1.0,  1.0,
           -1.0,  1.0,
           -1.0, -1.0
-        ]))],
-        ["a_tex", new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
+        ])),
+        a_tex: new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array([
           0.0, 1.0,
           1.0, 1.0,
           1.0, 0.0,
           1.0, 0.0,
           0.0, 0.0,
           0.0, 1.0
-        ]))]
-      ])),
+        ]))
+      }),
       6
     );
 
@@ -244,7 +251,7 @@ class SplashPassMSAA {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.shaders.use(gl);
-    gl.uniform1i(this.shaders.uniforms.get("diffuse")!.loc, 0);
+    gl.uniform1i(this.shaders.uniforms.u_diffuse.loc, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.frame.colorTexture);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -255,7 +262,7 @@ class SplashPassMSAA {
 
 class Rendr {
   pass: SplashPassMSAA;
-  shaders: ShaderPair;
+  shaders: ShaderPair<{ attribKeys: "a_pos", uniformKeys: "u_mvp" }>;
   fern: IndexedGeometry;
   width: number;
   height: number;
@@ -274,17 +281,17 @@ class Rendr {
     }
 
     this.shaders = new ShaderPair(gl, {
+      uniforms: { u_mvp: "Matrix4fv" },
       vert: {
         src: defaultVertSrc,
-        uniforms: [{ name: "mvp", kind: "Matrix4fv" }],
-        attributes: [{ name: "a_pos", size: 2, kind: gl.FLOAT }],
+        attributes: { a_pos: { size: 2, kind: gl.FLOAT } },
       },
-      frag: { src: defaultFragSrc, uniforms: [] }
+      frag: { src: defaultFragSrc }
     });
     const { vertices, indices } = fernGeoJSON.mesh;
     const fernVertPoses = new VertexBuffer(gl, gl.STATIC_DRAW, new Float32Array(vertices.flat()));
     this.fern = new IndexedGeometry(
-      this.shaders.makeVAO(gl, new Map([["a_pos", fernVertPoses]])),
+      this.shaders.makeVAO(gl, { a_pos: fernVertPoses }),
       new IndexBuffer(gl, gl.STATIC_DRAW, new Uint16Array(indices))
     );
 
@@ -305,7 +312,7 @@ class Rendr {
       let { width: w, height: h } = this;
       w /= 90; h /= 90;
       const mvp = mat4.ortho(mat4.create(), -w/2, w/2, -h/2, h/2, -1, 1);
-      gl.uniformMatrix4fv(this.shaders.uniforms.get("mvp")!.loc, false, mvp);
+      gl.uniformMatrix4fv(this.shaders.uniforms.u_mvp.loc, false, mvp);
 
       this.fern.draw(gl);
     });

@@ -2,12 +2,12 @@
 precision highp float;
 precision highp int;
 
-uniform sampler2D diffuse;
+uniform sampler2D u_diffuse;
 
 in vec2 v_tex;
 
 out vec4 color;
 
 void main() {
-  color = texture(diffuse, v_tex);
+  color = texture(u_diffuse, v_tex);
 }
